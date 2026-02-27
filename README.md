@@ -39,72 +39,11 @@ Siga o passo a passo abaixo para configurar o ambiente e executar a aplicação:
 git clone [https://github.com/UFPA-LAMIC/EduAccess-Pro.git](https://github.com/UFPA-LAMIC/EduAccess-Pro.git)
 cd EduAccess-Pro
 
-2. Criar e ativar o Ambiente Virtual (Recomendado)
+### 2. Criar e ativar o Ambiente Virtual (Recomendado)
 Para evitar conflitos de bibliotecas, crie um ambiente virtual Python:
 
-No Windows:
-
-Bash
+**No Windows:**
+```bash
 python -m venv venv
 venv\Scripts\activate
-No Linux/Mac:
-
-Bash
-python3 -m venv venv
-source venv/bin/activate
-3. Instalar as dependências do projeto
-Com o ambiente ativado, instale as bibliotecas necessárias:
-
-Bash
-pip install streamlit langchain-ollama gtts pypdf reportlab requests
-4. Baixar e Preparar a Inteligência Artificial (Llama)
-⚠️ ATENÇÃO: É estritamente necessário baixar o modelo de Inteligência Artificial na sua máquina local para que as funções cognitivas (TDAH, Autismo e Dislexia) funcionem.
-
-Certifique-se de ter instalado o Ollama no seu sistema operacional. Em seguida, abra um terminal (prompt de comando) separado e execute o comando abaixo para baixar e rodar o modelo Llama 3.1 (este download pode demorar dependendo da sua conexão, pois o modelo possui cerca de 4.7 GB):
-
-Bash
-ollama run llama3.1:8b
-(Deixe este terminal aberto/rodando em segundo plano enquanto utiliza o EduAccess Pro).
-
-5. Iniciar a Aplicação
-Volte para o terminal onde o ambiente virtual Python está ativado e execute:
-
-Bash
-streamlit run app.py
-A aplicação abrirá automaticamente no seu navegador padrão, operando geralmente no endereço http://localhost:8501/.
-
-🤝 Contribuição
-Quer contribuir para tornar a educação mais inclusiva? Aqui está como fazer:
-
-Faça um fork do projeto.
-
-Crie uma branch com sua feature:
-
-Bash
-git checkout -b minha-feature
-Commit suas alterações:
-
-Bash
-git commit -m 'Adicionando nova funcionalidade de acessibilidade'
-Envie as alterações para o seu fork:
-
-Bash
-git push origin minha-feature
-Abra um Pull Request para revisão.
-
-📜 Licença
-Este projeto está licenciado sob a licença MIT. Consulte o arquivo LICENSE para mais detalhes.
-
-❓ Dúvidas
-Se tiver alguma dúvida, dificuldade de instalação ou encontrar algum problema (bug), entre em contato através das seguintes opções:
-
-📧 E-mail do Laboratório: lamic@ufpa.br
-
-🐞 Reporte um bug abrindo uma issue na aba Issues do GitHub.
-
-Responsáveis pelo projeto:
-
-👨‍🏫 Orientador: Prof. Dr. ALS Castro (agcastro@ufpa.br)
-
-👨‍🎓 Bolsista: Gabriel Silva (silva.gabriel@itec.ufpa.br)
 
