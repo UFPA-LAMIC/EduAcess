@@ -38,7 +38,7 @@ Siga o passo a passo abaixo para configurar o ambiente e executar a aplicação:
 ```sh
 git clone [https://github.com/UFPA-LAMIC/EduAccess-Pro.git](https://github.com/UFPA-LAMIC/EduAccess-Pro.git)
 cd EduAccess-Pro
-
+###
 ### 2. Criar e ativar o Ambiente Virtual (Recomendado)
 Para evitar conflitos de bibliotecas, crie um ambiente virtual Python:
 
