@@ -1,0 +1,50 @@
+	Passo 1: Baixe a pasta 20260220Lhama.zip e extraia o conteúdo. Disponível no repositório do projeto.
+
+https://github.com/UFPA-LAMIC/EduAcess
+
+	Passo 2: Entrar na pasta do projeto
+
+# cd ~/Llama   # ou onde a pasta estiver localizada
+# ls -la       # Verificar arquivos
+
+	Passo 3: Criar e ativar ambiente virtual
+
+# pip install --upgrade pip
+# pip install -r requirements.txt
+
+	Passo 4: Instalar dependências
+
+# pip install --upgrade pip
+# pip install -r requirements.txt
+
+	Se não tiver requirements.txt, instale manualmente:
+
+pip install streamlit pypdf reportlab langchain-ollama requests pydub pillow
+
+	Passo 5: Verificar Ollama
+
+# Verificar se Ollama está instalado
+ollama --version
+
+# Se não estiver, instalar:
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Iniciar Ollama (em outro terminal ou background)
+ollama serve
+
+	Passo 6: Verificar modelo Llama
+
+# Listar modelos disponíveis
+ollama list
+
+# Se llama3.1:8b não estiver na lista, baixar:
+ollama pull llama3.1:8b
+
+	Passo 7: Executar o sistema
+
+No terminal com ambiente virtual ativado
+# streamlit run app.py
+
+	Passo 8: Acessar no navegador
+
+# cole no navegador: http://localhost:8501
