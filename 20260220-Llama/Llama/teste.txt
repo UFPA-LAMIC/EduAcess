@@ -1,0 +1,3 @@
+Para ativar o ambiente virtual: source ~/venvs/llama/bin/activate
+para rodar o modelo: ollama run llama3.1:8b
+para abrir a interface web: streamlit run app.py

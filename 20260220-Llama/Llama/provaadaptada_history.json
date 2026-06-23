@@ -1,0 +1,24 @@
+[
+  {
+    "timestamp": "2025-11-28T19:21:37.962490",
+    "profile": "Baixa Visão",
+    "model": "llama3.1:8b",
+    "elapsed_s": 43.88565397262573,
+    "pages_processed": 1,
+    "total_pages": 1,
+    "adapted_text": "",
+    "summary": "",
+    "questions": []
+  },
+  {
+    "timestamp": "2025-11-28T19:20:29.463207",
+    "profile": "Baixa Visão",
+    "model": "llama3.1:8b",
+    "elapsed_s": 62.542827129364014,
+    "pages_processed": 1,
+    "total_pages": 1,
+    "adapted_text": "",
+    "summary": "",
+    "questions": []
+  }
+]
