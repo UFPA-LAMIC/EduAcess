@@ -102,3 +102,7 @@ Responsáveis pelo projeto:
 -👨‍🏫 Orientador: Prof. Dr. ALS Castro (agcastro@ufpa.br)
 
 -👨‍🎓 Bolsista: Gabriel Silva (silva.gabriel@itec.ufpa.br)
+
+## 📚 Referências
+
+As referências bibliográficas utilizadas no desenvolvimento do projeto estão disponíveis em **[REFERENCES.md](REFERENCES.md)**.
