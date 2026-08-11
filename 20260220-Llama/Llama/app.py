@@ -1,24 +1,38 @@
-# app.py - EduAccess Pro v21 (Fix Fonte + IA para Cognitivo + Regex para Visual)
+# app.py - EduAccess Pro v34 (Gemini 3.5 Flash Only - Sem PyTorch/pix2tex)
+import os
 import streamlit as st
 import io
-import os
 import re
-import requests
 import unicodedata
 from enum import Enum
+from PIL import Image
+import requests
 
-# --- DEPENDÊNCIAS ---
+# --- INTEGRAÇÃO GOOGLE GEMINI E ÁUDIO ---
 try:
-    from gtts import gTTS
-    GTTS_AVAILABLE = True
+    import google.generativeai as genai
 except ImportError:
-    st.error("ERRO: Instale gTTS -> pip install gTTS")
+    st.error("ERRO: Instale a biblioteca do Gemini -> pip install google-generativeai")
     st.stop()
 
 try:
-    from pypdf import PdfReader
+    from gtts import gTTS
 except ImportError:
-    st.error("ERRO: Instale pypdf -> pip install pypdf")
+    st.error("ERRO: Instale a biblioteca de áudio -> pip install gTTS")
+    st.stop()
+
+# Configuração da Chave de API via Streamlit Secrets
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+except Exception:
+    st.error("ERRO: Chave da API não encontrada. Crie o arquivo .streamlit/secrets.toml com a sua GEMINI_API_KEY.")
+    st.stop()
+
+# --- DEPENDÊNCIAS DE PDF ---
+try:
+    import fitz  # PyMuPDF
+except ImportError:
+    st.error("ERRO: Instale PyMuPDF -> pip install pymupdf")
     st.stop()
 
 try:
@@ -26,469 +40,438 @@ try:
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import mm
-    from reportlab.lib import colors
-    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.lib.fonts import addMapping
 except ImportError:
     st.error("ERRO: Instale reportlab -> pip install reportlab")
     st.stop()
 
-LANGCHAIN_AVAILABLE = False
-try:
-    from langchain_ollama import ChatOllama
-    from langchain_core.prompts import ChatPromptTemplate
-    LANGCHAIN_AVAILABLE = True
-except ImportError:
-    pass
+# ==========================================
+# 0. CONFIGURAÇÃO GERAL
+# ==========================================
+MATH_ITALIC_RANGES = [(0x1D400, 0x1D7FF)]
 
 # ==========================================
-# 1. GESTOR DE FONTES (RETORNANDO AO MÉTODO QUE FUNCIONA)
+# 1. GESTOR DE FONTES
 # ==========================================
 @st.cache_resource
 def setup_fonts():
-    """
-    Usa APENAS o arquivo DejaVuSans.ttf (Regular) para tudo.
-    Isso garante que não haja quadrados, pois esse arquivo tem todos os símbolos.
-    """
     font_name = "DejaVuSans.ttf"
     local_path = os.path.abspath(font_name)
-    
-    # Mirrors confiáveis
-    urls = [
-        "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/ttf/DejaVuSans.ttf",
-        "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf",
-        "https://sourceforge.net/projects/dejavu/files/dejavu/2.37/DejaVuSans.ttf/download"
-    ]
-    
-    # 1. Download
+    urls = ["https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/ttf/DejaVuSans.ttf"]
+
     if not os.path.exists(local_path) or os.path.getsize(local_path) < 1000:
         for url in urls:
             try:
-                headers = {'User-Agent': 'Mozilla/5.0'} 
+                headers = {'User-Agent': 'Mozilla/5.0'}
                 r = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
-                if r.status_code == 200 and len(r.content) > 10000:
-                    with open(local_path, "wb") as f: f.write(r.content)
-                    break 
-            except: continue
+                if r.status_code == 200:
+                    with open(local_path, "wb") as f:
+                        f.write(r.content)
+                    break
+            except Exception:
+                continue
 
-    # 2. Registro (O "Pulo do Gato" para evitar boxes)
     if os.path.exists(local_path):
         try:
-            # Registra a fonte Base
             pdfmetrics.registerFont(TTFont('MathFont', local_path))
-            
-            # Registra O MESMO ARQUIVO como se fosse Negrito
-            # O ReportLab vai "engrossar" a fonte artificialmente ou apenas usar ela,
-            # mas garantimos que o glifo (desenho) do símbolo existe.
-            pdfmetrics.registerFont(TTFont('MathFont-Bold', local_path)) 
-            
-            addMapping('MathFont', 0, 0, 'MathFont')
-            addMapping('MathFont', 1, 0, 'MathFont-Bold')
             return 'MathFont', True
-        except: pass
-
-    # 3. Fallback Sistema Linux
-    linux_paths = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
-    ]
-    for path in linux_paths:
-        if os.path.exists(path):
-            try:
-                pdfmetrics.registerFont(TTFont('MathFont', path))
-                pdfmetrics.registerFont(TTFont('MathFont-Bold', path))
-                addMapping('MathFont', 0, 0, 'MathFont')
-                addMapping('MathFont', 1, 0, 'MathFont-Bold')
-                return 'MathFont', True
-            except: continue
-            
+        except Exception:
+            pass
     return "Helvetica", False
 
-GLOBAL_FONT, FONT_SUCCESS = setup_fonts()
+GLOBAL_FONT, _ = setup_fonts()
 
 # ==========================================
-# ENUMS
+# ENUMS E CONFIG
 # ==========================================
 class AccessibilityProfile(Enum):
     LOW_VISION = "Baixa Visão"
     BLINDNESS = "Cegueira (Leitor de Tela)"
     ADHD = "TDAH (I.A.)"
-    AUTISM = "Autismo (I.A.)"
-    DYSLEXIA = "Dislexia (I.A.)"
 
-DEFAULT_MODEL = "llama3.1:8b"
-
-st.set_page_config(page_title="EduAccess", layout="wide")
-
-if 'adapted_text' not in st.session_state: st.session_state.adapted_text = ""
-if 'audio_bytes' not in st.session_state: st.session_state.audio_bytes = None
+st.set_page_config(page_title="EduAccess Pro v34", layout="wide")
+if 'adapted_text' not in st.session_state:
+    st.session_state.adapted_text = ""
+if 'warnings' not in st.session_state:
+    st.session_state.warnings = []
 
 # ==========================================
-# 2. LIMPEZA E LAYOUT
+# 2. PROCESSAMENTO E RASTERIZAÇÃO
 # ==========================================
-def normalize_text(text):
-    return unicodedata.normalize('NFC', text) if text else ""
-
 def clean_text_artifacts(text):
-    t = unicodedata.normalize('NFC', text) if text else ""
-    
-    # 0. CORREÇÃO DO "I" FANTASMA E LIGATURAS (O Bug do PyPDF)
-    t = t.replace('ı', 'i').replace('ﬁ', 'fi').replace('ﬂ', 'fl')
-    
-    # 0.5 TRADUÇÃO MATEMÁTICA E GREGA (Adeus Caixas Pretas & Acessibilidade 100%)
-    # Transforma símbolos invisíveis para fontes comuns em texto legível
-    simbolos_matematicos = {
-        'α': ' alfa ', 'β': ' beta ', 'γ': ' gama ', 'θ': ' teta ',
-        'ω': ' ômega ', 'π': ' pi ', 'μ': ' micro ', 'Δ': ' delta ',
-        'λ': ' lambda ', 'φ': ' fi ', 'ρ': ' rô ', 'τ': ' tau ',
-        'σ': ' sigma ', 'Ω': ' ohms ', '°': ' graus ', '±': ' mais ou menos ',
-        '×': ' vezes ', '÷': ' dividido por ', '≠': ' diferente de ',
-        '≤': ' menor ou igual a ', '≥': ' maior ou igual a ',
-        '≈': ' aproximadamente ', '∞': ' infinito ', '√': ' raiz de ',
-        '∑': ' somatório de ', '∫': ' integral de ', '∂': ' derivada de ',
-        '∇': ' nabla ', '→': ' tende a ', '∈': ' pertence a ',
-        '²': ' ao quadrado ', '³': ' ao cubo '
-    }
-    for sim, nome in simbolos_matematicos.items():
-        t = t.replace(sim, nome)
-    
-    # 1. Corrige a cedilha e falhas do PDF no português
-    t = t.replace('¸', ',')
-    t = re.sub(r'([cC])\s+,', r'\1,', t)
-    t = re.sub(r',\s+([cC])', r',\1', t)
-    t = re.sub(r'c\s+ã', 'çã', t)
-    t = re.sub(r'c\s+õ', 'çõ', t)
-    t = re.sub(r'C\s+ã', 'Çã', t)
-    t = re.sub(r'C\s+õ', 'Çõ', t)
-    
-    # 2. O Pulo do Gato: Tira espaços APENAS se estiverem quebrando letras e acentos
-    t = re.sub(r'([a-zA-Z])\s+([~^´`ˆ˜¨])', r'\1\2', t)
-    t = re.sub(r'([~^´`ˆ˜¨])\s+([a-zA-Z])', r'\1\2', t)
-    
-    # 3. Mapeamento Direto Completo
-    mapa_acentos = {
-        'a~': 'ã', '~a': 'ã', 'o~': 'õ', '~o': 'õ', 'A~': 'Ã', 'O~': 'Õ',
-        'a^': 'â', '^a': 'â', 'e^': 'ê', '^e': 'ê', 'o^': 'ô', '^o': 'ô',
-        'A^': 'Â', '^A': 'Â', 'E^': 'Ê', '^E': 'Ê', 'O^': 'Ô', '^O': 'Ô',
-        'a´': 'á', '´a': 'á', 'e´': 'é', '´e': 'é', 'i´': 'í', '´i': 'í', 
-        'o´': 'ó', '´o': 'ó', 'u´': 'ú', '´u': 'ú', 'A´': 'Á', 'E´': 'É',
-        'I´': 'Í', 'O´': 'Ó', 'U´': 'Ú',
-        'a`': 'à', '`a': 'à', 'A`': 'À', '`A': 'À',
-        'c,': 'ç', ',c': 'ç', 'C,': 'Ç', ',C': 'Ç',
-        'aˆ': 'â', 'ˆa': 'â', 'eˆ': 'ê', 'ˆe': 'ê', 'oˆ': 'ô', 'ˆo': 'ô',
-        'a˜': 'ã', '˜a': 'ã', 'o˜': 'õ', '˜o': 'õ'
-    }
-    
-    for errado, certo in mapa_acentos.items():
-        t = t.replace(errado, certo)
-        
-    # 4. Limpeza de artefatos visuais
-    replacements = {
-        '\x00': '', '\f': '', '−': '-', '–': '-', '—': '-', 
-        '“': '"', '”': '"', '’': "'", '•': '-', '…': '...',
-        '▪': '-', '➢': '-', '✓': '-', '●': '-'
-    }
-    for k, v in replacements.items(): 
-        t = t.replace(k, v)
-        
-    # 5. VAPORIZADOR: Apaga acentos soltos e símbolos invisíveis
-    t = re.sub(r'[~^´`ˆ˜¨¸]', '', t)
-    
-    # 5.5 PURIFICADOR ASCII 
-    # Converte o texto para a tabela básica, apagando subscritos (como o 'T' rebaixado)
-    # Nós usamos encode e decode e passamos a flag 'ignore' para sumir com os bugs.
-    # Como as letras com acento já foram normalizadas na Etapa 3, elas sobrevivem!
-    t = unicodedata.normalize('NFKD', t).encode('ascii', 'ignore').decode('utf-8')
-    
-    # 6. Filtro Agressivo (A tag \s aqui garante que os ENTERS fiquem a salvo)
-    # Como rodamos o purificador acima, este filtro agora atua como uma barreira extra.
-    t = re.sub(r'[^\w\s.,;:!?()\[\]{}"\'/\\@#$%&*+\-=<>|]', '', t)
-    
-    # 7. CORREÇÃO DA FORMATAÇÃO: Limpa espaços em branco duplos
+    t = unicodedata.normalize('NFKC', text) if text else ""
     t = re.sub(r'[ \t]+', ' ', t)
-    
     return t.strip()
 
-def reflow_text(text):
-    """Reconstrói parágrafos, preservando títulos e listas na mesma caixa."""
-    text = text.replace('\r\n', '\n').replace('\r', '\n')
-    
-    # 1. Garante que todo título (que começa com #) vire um parágrafo isolado
-    text = re.sub(r'\n\s*(#+)', r'\n\n\1', text)
-    
-    paragraphs = re.split(r'\n\s*\n', text)
-    clean_paragraphs = []
-    
-    for p in paragraphs:
-        if not p.strip(): continue
-        
-        lines = p.split('\n')
-        reflowed_lines = []
-        current_line = ""
-        
-        for line in lines:
-            line = line.strip()
-            if not line: continue
-            
-            # 2. O RADAR: Detecta se a linha é um item de lista (-, *, •, 1., a))
-            if re.match(r'^([\-\*•]|\d+[\.\)]|[a-zA-Z]\))', line):
-                if current_line:
-                    reflowed_lines.append(current_line)
-                    current_line = ""
-                reflowed_lines.append(line)
-            else:
-                # Se não for lista, junta com a linha anterior
-                if current_line:
-                    current_line += " " + line
-                else:
-                    current_line = line
-                    
-        if current_line:
-            reflowed_lines.append(current_line)
-            
-        # Junta os itens de lista com um Enter simples (\n)
-        clean_paragraphs.append("\n".join(reflowed_lines))
-        
-    return "\n\n".join(clean_paragraphs)
+def count_letters(text):
+    count = 0
+    for ch in text:
+        cp = ord(ch)
+        if ch.isalpha() or any(lo <= cp <= hi for lo, hi in MATH_ITALIC_RANGES):
+            count += 1
+    return count
 
-# ==========================================
-# 3. MOTORES DE PROCESSAMENTO (ROTEAMENTO AUTOMÁTICO)
-# ==========================================
+def looks_garbled(text):
+    if not text:
+        return True
+    total = len(text)
+    suspicious = sum(1 for ch in text if 0xE000 <= ord(ch) <= 0xF8FF or (ord(ch) < 9))
+    return total > 0 and (suspicious / total) > 0.2
 
-# Motor Rápido (Regex) - Para Visuais
-def regex_process(text, profile):
-    text = clean_text_artifacts(text)
-    text = reflow_text(text)
-    
-    if profile == AccessibilityProfile.BLINDNESS:
-        math_map = {
-            '∫': ' integral de ', '∑': ' somatorio de ', '∂': ' derivada parcial ', 
-            '∇': ' nabla ', '∀': ' para todo ', '∈': ' pertence a ', '∞': ' infinito ', 
-            '√': ' raiz quadrada de ', 'π': ' pi ', '→': ' tende a '
-        }
-        for k, v in math_map.items(): text = text.replace(k, v)
-        text = re.sub(r'\b([a-zA-Z])\(([a-zA-Z0-9])\)', r'\1 de \2', text) 
-        text = re.sub(r'\^2', ' ao quadrado', text)
-    
-    return text
+def validate_latex(code):
+    if not code or not (2 <= len(code) <= 400):
+        return False
+    pairs = {'{': '}', '(': ')', '[': ']'}
+    stack = []
+    for ch in code:
+        if ch in pairs:
+            stack.append(pairs[ch])
+        elif ch in pairs.values():
+            if not stack or stack.pop() != ch:
+                return False
+    if stack:
+        return False
+    suspicious_tokens = ['\\boldmath', '\\proyte', '\\mit}', '\\longrightarrow\\longrightarrow']
+    if any(tok in code for tok in suspicious_tokens):
+        return False
+    if code.count('\\qquad') > 5:
+        return False
+    return True
 
-# Motor Inteligente (IA) - Para Cognitivos
-def ai_process_smart(text, profile, model_name):
-    text = clean_text_artifacts(text)
-    text = reflow_text(text)
-    
-    # Divide por parágrafos duplos
-    chunks = text.split('\n\n')
-    processed = []
-    
-    llm = None
-    try: 
-        # Timeout um pouco maior para garantir que a IA consiga pensar
-        llm = ChatOllama(model=model_name, temperature=0.1, timeout=60.0)
-    except: return text
+def rasterizar_regiao_pdf(page, bbox, zoom=2.0):
+    rect = fitz.Rect(bbox)
+    mat = fitz.Matrix(zoom, zoom)
+    pix = page.get_pixmap(matrix=mat, clip=rect, alpha=False)
+    return pix.tobytes("png")
 
-    prog_bar = st.progress(0)
-    total = len(chunks)
-    
-    for i, c in enumerate(chunks):
-        if len(c) < 20: # Ignora pedaços muito pequenos
-            processed.append(c)
-            continue
-            
-        sys_instr = ""
-        # PROMPTS PODEROSOS (ESTRUTURADOS)
-        if profile == AccessibilityProfile.ADHD:
-            sys_instr = "Você é um assistente para TDAH. Simplifique o texto. REGRA CRÍTICA: Use '#' antes de Títulos e '-' para itens de lista. NÃO use asteriscos e NÃO use emojis."
-        elif profile == AccessibilityProfile.AUTISM:
-            sys_instr = "Você é um assistente para Autismo. Reescreva de forma literal e lógica. REGRA CRÍTICA: Use '#' antes de Títulos e '-' para itens de lista. NÃO use metáforas, asteriscos ou emojis."
-        elif profile == AccessibilityProfile.DYSLEXIA:
-            sys_instr = "Você é um assistente para Dislexia. Simplifique palavras complexas e estruture visualmente. REGRA CRÍTICA: Use '#' antes de Títulos e '-' para itens de lista. NÃO use asteriscos e NÃO use emojis."
-        try:
-            # Chama a IA
-            resp = (ChatPromptTemplate.from_messages([("system", sys_instr), ("human", "{t}")]) | llm).invoke({"t": c})
-            
-            # Limpa quebras extras que a IA as vezes coloca
-            clean_resp = resp.content.replace('\n', ' ')
-            processed.append(clean_resp)
-        except:
-            # Fallback seguro: devolve o original se a IA falhar
-            processed.append(c)
-            
-        prog_bar.progress((i+1)/total)
-    
-    prog_bar.empty()
-    return "\n\n".join(processed)
+def _rects_overlap(a, b, margin=2):
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    return not (ax1 + margin < bx0 or bx1 + margin < ax0 or ay1 + margin < by0 or by1 + margin < ay0)
 
-# Lógica de Decisão
-def smart_router(text, profile_val, model_name):
-    profile = AccessibilityProfile(profile_val)
-    
-    # Se for perfil VISUAL (Cego/Baixa Visão) -> Usa Regex (Rápido)
-    if profile in [AccessibilityProfile.LOW_VISION, AccessibilityProfile.BLINDNESS]:
-        return regex_process(text, profile)
-    
-    # Se for perfil COGNITIVO (TDAH/Autismo/Dislexia) -> Usa IA (Llama)
-    else:
-        return ai_process_smart(text, profile, model_name)
-
-# ==========================================
-# 4. GERAÇÃO PDF
-# ==========================================
-def create_pdf(text, profile, f_size, line_mult, para_space, align_option):
-    buff = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buff, pagesize=A4, 
-        leftMargin=25*mm, rightMargin=25*mm, 
-        topMargin=25*mm, bottomMargin=25*mm
-    )
-    styles = getSampleStyleSheet()
-    
-    rl_align = TA_LEFT
-    if align_option == "Justificado": rl_align = TA_JUSTIFY
-    elif align_option == "Centro": rl_align = TA_CENTER
-    elif align_option == "Direita": rl_align = TA_RIGHT
-    
-    style_body = ParagraphStyle(
-        'CustomBody', parent=styles['Normal'],
-        fontName=GLOBAL_FONT, fontSize=f_size,
-        leading=f_size * line_mult, spaceAfter=para_space,
-        alignment=rl_align, textColor=colors.black,
-        splitLongWords=0
-    )
-    
-    style_head = ParagraphStyle(
-        'CustomHead', parent=styles['Heading2'],
-        fontName=GLOBAL_FONT, fontSize=f_size + 4,
-        leading=(f_size + 4) * 1.3, spaceAfter=para_space + 5,
-        alignment=TA_LEFT, textColor=colors.black
-    )
-
-    elems = []
-    elems.append(Paragraph("Material Adaptado", style_head))
-    elems.append(Paragraph(f"Perfil: {profile.value}", style_body))
-    elems.append(Spacer(1, 20))
-    
-    paragraphs = text.split('\n\n')
-    
-    for p in paragraphs:
-        if not p.strip(): continue
-        
-        p_safe = p.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        p_safe = p_safe.replace('\n', '<br/>')
-        p_safe = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', p_safe)
-        
-        if (len(p) < 100 and p.isupper()) or p.startswith('#'):
-            elems.append(Paragraph(p_safe.replace('#', ''), style_head))
-        else:
-            elems.append(Paragraph(p_safe, style_body))
-        
+def detect_vector_diagrams(page, min_area=2500, min_side=35, min_strokes=5):
     try:
-        doc.build(elems)
-        buff.seek(0)
-        return buff.getvalue()
+        drawings = page.get_drawings()
+    except Exception:
+        return []
+    if not drawings:
+        return []
+
+    page_width = page.rect.width
+    clusters = []
+    for d in drawings:
+        r = d.get("rect")
+        if not r or r.width <= 0 or r.height <= 0:
+            continue
+        fr = fitz.Rect(r)
+        added = False
+        for c in clusters:
+            if _rects_overlap(tuple(c["rect"]), tuple(fr), margin=15):
+                c["rect"] |= fr
+                c["count"] += 1
+                added = True
+                break
+        if not added:
+            clusters.append({"rect": fr, "count": 1})
+
+    changed = True
+    guard = 0
+    while changed and len(clusters) > 1 and guard < 20:
+        changed = False
+        guard += 1
+        merged = []
+        used = [False] * len(clusters)
+        for i in range(len(clusters)):
+            if used[i]:
+                continue
+            base_cluster = clusters[i]
+            for j in range(i + 1, len(clusters)):
+                if used[j]:
+                    continue
+                if _rects_overlap(tuple(base_cluster["rect"]), tuple(clusters[j]["rect"]), margin=15):
+                    base_cluster["rect"] |= clusters[j]["rect"]
+                    base_cluster["count"] += clusters[j]["count"]
+                    used[j] = True
+                    changed = True
+            used[i] = True
+            merged.append(base_cluster)
+        clusters = merged
+
+    valid_rects = []
+    for c in clusters:
+        r = c["rect"]
+        # ESCUDO ANTI-TABELAS (70%)
+        if r.width > page_width * 0.70:
+            continue
+
+        if (r.width >= min_side and r.height >= min_side and
+            (r.width * r.height) >= min_area and c["count"] >= min_strokes):
+            valid_rects.append(r)
+
+    return valid_rects
+
+def generate_audiodescription(image_bytes):
+    """Gera a audiodescrição utilizando a API do Gemini 3.5 Flash"""
+    try:
+        pil_img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+    except Exception:
+        return "[AVISO: não foi possível ler esta imagem para gerar a descrição]"
+
+    prompt = (
+        "Você é um sistema de audiodescrição técnica. "
+        "Descreva este diagrama ou imagem de forma estritamente técnica, clara e objetiva para uma pessoa com deficiência visual. "
+        "Se for um circuito elétrico, liste todos os componentes, seus valores exatos conforme escritos, e a topologia das conexões. "
+        "Não invente valores que não estão na imagem. "
+        "REGRA ESTRITA: Retorne APENAS a audiodescrição. NÃO use NENHUMA saudação, introdução, comentário pessoal "
+        "ou nota de encerramento (como 'Olá', 'Aqui está a descrição', 'Como seu assistente', etc.). Vá direto ao conteúdo."
+    )
+
+    try:
+        model = genai.GenerativeModel('gemini-3.1-flash-lite')
+        response = model.generate_content([prompt, pil_img])
+
+        desc = response.text.strip()
+        if not desc:
+            return "[AVISO: O modelo retornou uma descrição vazia.]"
+        return desc
+
     except Exception as e:
-        print(f"Erro PDF: {e}")
+        return f"[AVISO: Falha na API do Gemini ({e}) — revise manualmente]"
+
+def generate_latex_ocr(image_bytes):
+    """Transcreve uma fórmula matemática em imagem para código LaTeX usando o Gemini 3.5 Flash."""
+    try:
+        pil_img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+    except Exception:
         return None
 
-# ==========================================
-# 5. ÁUDIO
-# ==========================================
-@st.cache_data(show_spinner=False)
-def get_audio_gtts(text):
-    if not text.strip(): return None
+    prompt = (
+        "Você é um sistema de OCR matemático especializado em transcrever fórmulas para LaTeX. "
+        "Transcreva a fórmula matemática presente na imagem para código LaTeX válido, preservando "
+        "exatamente os símbolos, subíndices, sobrescritos, frações, variáveis e operadores como aparecem na imagem. "
+        "Não resolva, não simplifique, não corrija e não invente símbolos que não estão na imagem. "
+        "REGRA ESTRITA: Responda APENAS com o código LaTeX puro — sem cifrão ($), sem blocos de código (```), "
+        "sem explicações, sem saudações e sem qualquer texto adicional antes ou depois."
+    )
+
     try:
-        tts = gTTS(text=text, lang='pt', slow=False)
-        fp = io.BytesIO()
-        tts.write_to_fp(fp)
-        return fp.getvalue()
-    except: return None
+        model = genai.GenerativeModel('gemini-3.1-flash-lite')
+        response = model.generate_content([prompt, pil_img])
+        latex_code = response.text.strip()
+
+        # Remove possíveis cercas de código ou cifrões que o modelo insista em devolver
+        latex_code = re.sub(r'^```[a-zA-Z]*\n?', '', latex_code)
+        latex_code = re.sub(r'```$', '', latex_code).strip()
+        latex_code = latex_code.strip('$').strip()
+
+        return latex_code if latex_code else None
+
+    except Exception:
+        return None
+
+def extract_dla_pipeline(pdf_bytes, profile, prog_bar, max_pages=5, zoom_diagram=2.0, zoom_math=3.0):
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    processed_content = []
+    page_warnings = []
+
+    total_pages_doc = len(doc)
+    total_pages = min(total_pages_doc, max_pages)
+    if total_pages_doc > max_pages:
+        page_warnings.append(f"O documento tem {total_pages_doc} páginas; apenas as primeiras {max_pages} foram processadas.")
+
+    needs_visual_desc = profile in (AccessibilityProfile.LOW_VISION, AccessibilityProfile.BLINDNESS)
+
+    for page_num in range(total_pages):
+        page = doc.load_page(page_num)
+        blocks = page.get_text("dict")["blocks"]
+
+        diagram_rects = detect_vector_diagrams(page) if needs_visual_desc else []
+
+        items = []
+        for b in blocks:
+            kind = "raster_image" if b["type"] == 1 else "text"
+            items.append({"kind": kind, "bbox": b["bbox"], "block": b})
+        for r in diagram_rects:
+            items.append({"kind": "vector_diagram", "bbox": tuple(r)})
+        items.sort(key=lambda it: (round(it["bbox"][1], 1), round(it["bbox"][0], 1)))
+
+        consumed_ids = set()
+        for it in items:
+            if it["kind"] == "vector_diagram":
+                for other in items:
+                    if other["kind"] == "text" and _rects_overlap(it["bbox"], other["bbox"]):
+                        consumed_ids.add(id(other["block"]))
+
+        for it in items:
+            if it["kind"] in ("vector_diagram", "raster_image"):
+                if not needs_visual_desc:
+                    continue
+
+                is_equation_image = False
+                if it["kind"] == "raster_image":
+                    img_bbox = it["block"]["bbox"]
+                    w = img_bbox[2] - img_bbox[0]
+                    h = img_bbox[3] - img_bbox[1]
+                    aspect_ratio = w / h if h > 0 else 0
+                    if aspect_ratio > 3.0:
+                        is_equation_image = True
+
+                if is_equation_image:
+                    img_bytes = it["block"]["image"]
+                    latex_code = generate_latex_ocr(img_bytes)
+
+                    if latex_code and validate_latex(latex_code):
+                        processed_content.append(f"\n\n[FÓRMULA (OCR DE IMAGEM)]: $ {latex_code} $\n\n")
+                    else:
+                        processed_content.append("\n\n[AVISO: FÓRMULA EM IMAGEM ILEGÍVEL]\n\n")
+                else:
+                    if it["kind"] == "vector_diagram":
+                        img_bytes = rasterizar_regiao_pdf(page, it["bbox"], zoom=zoom_diagram)
+                    else:
+                        img_bytes = it["block"]["image"]
+
+                    desc = generate_audiodescription(img_bytes)
+                    processed_content.append(f"\n\n[AUDIODESCRIÇÃO DA IMAGEM]: {desc}\n\n")
+                continue
+
+            block = it["block"]
+            if id(block) in consumed_ids:
+                continue
+
+            text_block = "".join(span["text"] + " " for line in block["lines"] for span in line["spans"])
+            bbox = block['bbox']
+            altura = bbox[3] - bbox[1]
+
+            letras_normais = count_letters(text_block)
+            simbolos_mat = len(re.findall(r'[0-9=\+\-\/\(\)\[\]\{\}\^\_]', text_block))
+
+            is_math = (simbolos_mat > 3) and (letras_normais < 30) and (len(text_block) < 150)
+            is_diagram_like = (not is_math) and altura > 100 and len(text_block) < 200
+
+            if is_math:
+                cleaned = clean_text_artifacts(text_block)
+                if needs_visual_desc and looks_garbled(cleaned):
+                    img_bytes = rasterizar_regiao_pdf(page, bbox, zoom=zoom_math)
+                    latex_code = generate_latex_ocr(img_bytes)
+
+                    if latex_code and validate_latex(latex_code):
+                        processed_content.append(f"\n\n[FÓRMULA LATEX (OCR)]: $ {latex_code} $\n\n")
+                    else:
+                        processed_content.append(f"\n\n[FÓRMULA - texto original ilegível, revisar manualmente]: {cleaned}\n\n")
+                else:
+                    processed_content.append(f"\n\n[FÓRMULA]: {cleaned}\n\n")
+
+            elif is_diagram_like:
+                if needs_visual_desc:
+                    img_bytes = rasterizar_regiao_pdf(page, bbox, zoom=zoom_diagram)
+                    desc = generate_audiodescription(img_bytes)
+                    processed_content.append(f"\n\n[DIAGRAMA IDENTIFICADO]: {desc}\n\n")
+                else:
+                    cleaned = clean_text_artifacts(text_block)
+                    if cleaned:
+                        processed_content.append(cleaned)
+            else:
+                cleaned = clean_text_artifacts(text_block)
+                if cleaned:
+                    processed_content.append(cleaned)
+
+        prog_bar.progress((page_num + 1) / total_pages)
+
+    return "\n".join(processed_content), page_warnings
 
 # ==========================================
-# UI
+# 3. PDF E UI
 # ==========================================
+def create_pdf(text, profile, f_size, line_mult, para_space):
+    buff = io.BytesIO()
+    doc = SimpleDocTemplate(buff, pagesize=A4, leftMargin=25 * mm, rightMargin=25 * mm,
+                             topMargin=25 * mm, bottomMargin=25 * mm)
+    styles = getSampleStyleSheet()
+
+    style_body = ParagraphStyle(
+        'Body',
+        parent=styles['Normal'],
+        fontName=GLOBAL_FONT,
+        fontSize=f_size,
+        leading=f_size * line_mult,
+        spaceAfter=para_space
+    )
+
+    elems = [Paragraph(f"Material Adaptado - {profile.value}", styles['Heading1']), Spacer(1, 20)]
+
+    for p in text.split('\n\n'):
+        if not p.strip():
+            continue
+        p_safe = p.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('\n', '<br/>')
+
+        if "[AVISO" in p:
+            style_warn = ParagraphStyle('Warn', parent=style_body, textColor='red', leftIndent=20)
+            elems.append(Paragraph(f"<b>{p_safe}</b>", style_warn))
+        elif "[DIAGRAMA" in p or "[AUDIODESCRIÇÃO" in p or "[FÓRMULA" in p:
+            style_ad = ParagraphStyle('AD', parent=style_body, textColor='blue', leftIndent=20)
+            elems.append(Paragraph(f"<b>{p_safe}</b>", style_ad))
+        else:
+            elems.append(Paragraph(p_safe, style_body))
+
+    doc.build(elems)
+    buff.seek(0)
+    return buff.getvalue()
+
 def main():
-    st.sidebar.title("EduAccess")
-    
-    if FONT_SUCCESS: st.sidebar.success(f"Fonte Ativa: DejaVu (Anti-Boxes)")
-    else: st.sidebar.warning("Usando Fonte Padrão")
-    st.sidebar.markdown("---")
-
-    p_names = [p.value for p in AccessibilityProfile]
-    sel_profile = st.sidebar.selectbox("Necessidade", p_names)
+    st.sidebar.title("EduAccess Pro v34")
+    sel_profile = st.sidebar.selectbox("Necessidade", [p.value for p in AccessibilityProfile])
     profile = AccessibilityProfile(sel_profile)
-    
-    align_opt = st.sidebar.selectbox("Alinhamento", ["Justificado", "Esquerda", "Centro", "Direita"])
-    
-    st.sidebar.markdown("### Visual")
-    f_size = st.sidebar.slider("Tamanho", 10, 30, 14)
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Ajustes de Leitura")
+    f_size = st.sidebar.slider("Tamanho Fonte", 10, 30, 14)
     line_spacing = st.sidebar.slider("Entrelinhas", 1.0, 3.0, 1.5)
     para_padding = st.sidebar.slider("Espaço Parágrafos", 0, 50, 15)
-    
+
+    with st.sidebar.expander("Configurações avançadas"):
+        max_pages = st.slider("Máximo de páginas a processar", 1, 30, 5)
+        zoom_diagram = st.slider("Zoom para diagramas", 1.0, 4.0, 2.0, 0.5)
+        zoom_math = st.slider("Zoom para fórmulas", 1.0, 5.0, 3.0, 0.5)
+
     col1, col2 = st.columns(2)
-    
     with col1:
-        st.subheader("Entrada")
-        up = st.file_uploader("PDF/TXT", type=['pdf', 'txt'])
-        txt = st.text_area("Texto Manual", height=150)
-        
-        if st.button("PROCESSAR", type="primary"):
-            raw = ""
+        up = st.file_uploader("Upload do Material (PDF)", type=['pdf'])
+        if st.button("PROCESSAR MATERIAL"):
             if up:
-                try: 
-                    if up.type == "application/pdf":
-                        pdf = PdfReader(io.BytesIO(up.read()))
-                        page_limit = 10 
-                        raw = "\n\n".join([p.extract_text() for p in pdf.pages[:page_limit] if p.extract_text()])
-                    else: raw = up.read().decode('utf-8')
-                except: st.error("Erro leitura")
-            elif txt: raw = txt
-            
-            if raw:
-                # LÓGICA DE EXECUÇÃO
-                if profile in [AccessibilityProfile.ADHD, AccessibilityProfile.AUTISM, AccessibilityProfile.DYSLEXIA]:
-                    with st.spinner("IA Analisando (TDAH/Autismo/Dislexia)..."):
-                        res = smart_router(raw, sel_profile, DEFAULT_MODEL)
-                else:
-                    # Cegueira/Baixa Visão é instantâneo (Regex)
-                    res = smart_router(raw, sel_profile, DEFAULT_MODEL)
-                
-                st.session_state.adapted_text = res
-                st.session_state.audio_bytes = None
-                st.success("Pronto!")
+                prog_bar = st.progress(0)
+                raw_text, warnings = extract_dla_pipeline(
+                    up.read(), profile, prog_bar,
+                    max_pages=max_pages,
+                    zoom_diagram=zoom_diagram, zoom_math=zoom_math,
+                )
+                st.session_state.adapted_text = raw_text
+                st.session_state.warnings = warnings
+                prog_bar.empty()
+                st.rerun()
+            else:
+                st.warning("Selecione um arquivo PDF antes de processar.")
 
     with col2:
-        st.subheader("Saída")
+        if st.session_state.warnings:
+            for w in st.session_state.warnings:
+                st.warning(w)
+
         if st.session_state.adapted_text:
-            
-            # --- NOVO VISUALIZADOR EDITÁVEL ---
-            texto_editado = st.text_area(
-                label="📝 Revise e edite o material gerado pela IA:",
-                value=st.session_state.adapted_text,
-                height=330
-            )
-            
-            # Garantimos que qualquer edição feita pelo professor seja salva
-            # e repassada para o Gerador de PDF e Áudio logo abaixo!
-            st.session_state.adapted_text = texto_editado
-            
-            c1, c2 = st.columns(2)
-            pdf = create_pdf(st.session_state.adapted_text, profile, f_size, line_spacing, para_padding, align_opt)
-            
-            if pdf: c1.download_button("📄 Baixar PDF", pdf, "adaptado.pdf", "application/pdf")
-            
-            if profile == AccessibilityProfile.BLINDNESS:
-                if st.button("🔊 Gerar Áudio"):
-                    with st.spinner("Gerando MP3..."):
-                        mp3 = get_audio_gtts(st.session_state.adapted_text)
-                        st.session_state.audio_bytes = mp3
-                        st.rerun()
-                
-                if st.session_state.audio_bytes:
-                    st.audio(st.session_state.audio_bytes, format='audio/mp3')
-                    st.download_button("⬇️ Baixar MP3", st.session_state.audio_bytes, "audio.mp3", "audio/mpeg")
+            st.text_area("Resultado:", st.session_state.adapted_text, height=500)
+
+            # --- BOTÃO DE ÁUDIO NATIVO (TTS) ---
+            if st.button("🔊 Ouvir Adaptação"):
+                with st.spinner("Sintetizando áudio..."):
+                    # Converte o texto da tela para voz (Português do Brasil)
+                    tts = gTTS(text=st.session_state.adapted_text, lang='pt', tld='com.br')
+                    audio_fp = io.BytesIO()
+                    tts.write_to_fp(audio_fp)
+                    audio_fp.seek(0)
+                    st.audio(audio_fp, format='audio/mp3')
+
+            pdf_bytes = create_pdf(st.session_state.adapted_text, profile, f_size, line_spacing, para_padding)
+            st.download_button("Exportar PDF", pdf_bytes, "adaptado.pdf", "application/pdf")
 
 if __name__ == "__main__":
     main()
