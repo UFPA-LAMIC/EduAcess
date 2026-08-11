@@ -1,5 +1,6 @@
 # app.py - EduAccess Pro v34 (Gemini 3.5 Flash Only - Sem PyTorch/pix2tex)
 import os
+import time
 import streamlit as st
 import io
 import re
@@ -219,12 +220,21 @@ def generate_audiodescription(image_bytes):
         return "[AVISO: não foi possível ler esta imagem para gerar a descrição]"
 
     prompt = (
-        "Você é um sistema de audiodescrição técnica. "
-        "Descreva este diagrama ou imagem de forma estritamente técnica, clara e objetiva para uma pessoa com deficiência visual. "
-        "Se for um circuito elétrico, liste todos os componentes, seus valores exatos conforme escritos, e a topologia das conexões. "
-        "Não invente valores que não estão na imagem. "
-        "REGRA ESTRITA: Retorne APENAS a audiodescrição. NÃO use NENHUMA saudação, introdução, comentário pessoal "
-        "ou nota de encerramento (como 'Olá', 'Aqui está a descrição', 'Como seu assistente', etc.). Vá direto ao conteúdo."
+        """Você é um especialista em audiodescrição técnica para pessoas com deficiência visual. Sua tarefa é descrever o diagrama ou imagem de forma estritamente técnica, clara e estruturada.
+
+DIRETRIZES DE DESCRIÇÃO:
+
+Visão Geral: Comece sempre com um resumo macro do que a imagem representa (ex: tipo de diagrama, finalidade aparente) antes de detalhar as partes.
+
+Detalhamento Lógico e Topológico: Descreva a topologia e as conexões seguindo um fluxo direcional claro (ex: da esquerda para a direita, ou da malha de entrada para a saída). Liste os componentes e seus valores exatos.
+
+Estados e Representações Visuais: Relate explicitamente o estado físico ou visual dos componentes. Identifique alterações como fontes curto-circuitadas (linhas contínuas espessas substituindo o componente), terminais abertos, chaves abertas/fechadas ou marcações de medição (setas, polaridades).
+
+Leitura de Tela (Acessibilidade): Escreva siglas, variáveis e fórmulas de forma estruturada para a pronúncia correta de leitores de tela. Separe letras maiúsculas com espaços (ex: 'V O C'). Para subscritos, escreva a palavra "índice" (ex: 'R índice T H' ou 'v índice L').
+
+Fidelidade Absoluta: Não deduza, não resolva e não invente valores, conexões ou componentes que não estejam visualmente explícitos na imagem.
+
+REGRA ESTRITA E ABSOLUTA: Retorne APENAS o texto contínuo da audiodescrição. É TERMINANTEMENTE PROIBIDO usar saudações, introduções, comentários, notas de encerramento ou qualquer formatação Markdown (sem negrito, sem itálico, sem listas com asteriscos). Vá direto ao primeiro caractere do conteúdo."""
     )
 
     try:
@@ -247,12 +257,21 @@ def generate_latex_ocr(image_bytes):
         return None
 
     prompt = (
-        "Você é um sistema de OCR matemático especializado em transcrever fórmulas para LaTeX. "
-        "Transcreva a fórmula matemática presente na imagem para código LaTeX válido, preservando "
-        "exatamente os símbolos, subíndices, sobrescritos, frações, variáveis e operadores como aparecem na imagem. "
-        "Não resolva, não simplifique, não corrija e não invente símbolos que não estão na imagem. "
-        "REGRA ESTRITA: Responda APENAS com o código LaTeX puro — sem cifrão ($), sem blocos de código (```), "
-        "sem explicações, sem saudações e sem qualquer texto adicional antes ou depois."
+        """Você é um sistema automatizado de OCR matemático de altíssima precisão. Sua única função é transcrever fórmulas matemáticas presentes em imagens para código LaTeX válido.
+
+DIRETRIZES DE TRANSCRIÇÃO:
+
+Preservação Absoluta: Mantenha exatamente os símbolos, subíndices, sobrescritos, frações, variáveis e operadores físicos/matemáticos como aparecem na imagem. 
+
+Matrizes e Estruturas Dimensionais: Para matrizes e vetores, respeite rigorosamente as dimensões apresentadas na imagem (ex.: 3x3, 2x2) e o alinhamento dos elementos, utilizando os ambientes corretos (como pmatrix, bmatrix ou vmatrix). Não omita nenhum elemento.
+
+Texto em Fórmulas: Se houver palavras ou texto puro no meio da equação, encapsule-os obrigatoriamente no comando \text{} para não quebrar a formatação matemática.
+
+Sem Alterações Analíticas: Não resolva as contas, não simplifique expressões, não corrija possíveis erros matemáticos da imagem e não invente símbolos.
+
+Múltiplas Equações: Se houver mais de uma linha de fórmulas interdependentes, utilize ambientes adequados como \begin{aligned} ... \end{aligned} ou separe-as utilizando as quebras de linha padrão do LaTeX (\\).
+
+REGRA ESTRITA E ABSOLUTA: O seu output será injetado diretamente em um parser de sistema. Qualquer caractere que não seja código LaTeX puro causará um erro fatal. Responda EXCLUSIVAMENTE com o código. É TERMINANTEMENTE PROIBIDO incluir marcações de bloco de código (```latex ... ```), delimitadores de ambiente inline ou display (como $ ou $$), palavras introdutórias (como 'Aqui está'), explicações, saudações ou comentários. Retorne apenas a string do código pronta para compilação."""
     )
 
     try:
@@ -307,44 +326,67 @@ def extract_dla_pipeline(pdf_bytes, profile, prog_bar, max_pages=5, zoom_diagram
             if it["kind"] in ("vector_diagram", "raster_image"):
                 if not needs_visual_desc:
                     continue
+                
+                bbox_img = it["bbox"] if it["kind"] == "vector_diagram" else it["block"]["bbox"]
 
                 is_equation_image = False
                 if it["kind"] == "raster_image":
                     img_bbox = it["block"]["bbox"]
                     w = img_bbox[2] - img_bbox[0]
                     h = img_bbox[3] - img_bbox[1]
+                    
+                    # 💡 SOLUÇÃO 1: ANTI-ALUCINAÇÃO
+                    # Se a imagem for minúscula (como a checkbox ☑), ignore-a completamente.
+                    if w < 25 or h < 25:
+                        continue 
+                    
                     aspect_ratio = w / h if h > 0 else 0
                     if aspect_ratio > 3.0:
                         is_equation_image = True
 
                 if is_equation_image:
                     img_bytes = it["block"]["image"]
+                    time.sleep(4.1) 
                     latex_code = generate_latex_ocr(img_bytes)
 
                     if latex_code and validate_latex(latex_code):
-                        processed_content.append(f"\n\n[FÓRMULA (OCR DE IMAGEM)]: $ {latex_code} $\n\n")
+                        processed_content.append({"page_num": page_num, "bbox": bbox_img, "type": "formula", "content": f"[FÓRMULA (OCR DE IMAGEM)]: $ {latex_code} $"})
                     else:
-                        processed_content.append("\n\n[AVISO: FÓRMULA EM IMAGEM ILEGÍVEL]\n\n")
+                        processed_content.append({"page_num": page_num, "bbox": bbox_img, "type": "aviso", "content": "[AVISO: FÓRMULA EM IMAGEM ILEGÍVEL]"})
                 else:
                     if it["kind"] == "vector_diagram":
                         img_bytes = rasterizar_regiao_pdf(page, it["bbox"], zoom=zoom_diagram)
                     else:
                         img_bytes = it["block"]["image"]
 
+                    time.sleep(4.1)
                     desc = generate_audiodescription(img_bytes)
-                    processed_content.append(f"\n\n[AUDIODESCRIÇÃO DA IMAGEM]: {desc}\n\n")
+                    processed_content.append({"page_num": page_num, "bbox": bbox_img, "type": "audiodescricao", "content": f"[AUDIODESCRIÇÃO DA IMAGEM]: {desc}"})
                 continue
 
             block = it["block"]
+            
+            # Precisamos extrair o texto AQUI em cima para poder checar o lixo antes de descartá-lo
+            text_block = "".join(span["text"] + " " for line in block["lines"] for span in line["spans"])
+            bbox_txt = block['bbox']
+            
+            # 💡 SOLUÇÃO 2: O FILTRO DO "LIQUID PAPER" (Lixo Visual)
+            # Se o texto tiver padrões estranhos de falha de circuito (WWW, M WW)
+            if re.search(r'W{2,}', text_block) or "M WW" in text_block:
+                processed_content.append({"page_num": page_num, "bbox": bbox_txt, "type": "lixo_visual", "content": ""})
+                continue # Some do leitor de tela e vai ser pintado de branco
+            
+            # Só depois do Liquid Paper checamos se ele pertence a um diagrama
             if id(block) in consumed_ids:
                 continue
 
-            text_block = "".join(span["text"] + " " for line in block["lines"] for span in line["spans"])
-            bbox = block['bbox']
-            altura = bbox[3] - bbox[1]
+            altura = bbox_txt[3] - bbox_txt[1]
 
             letras_normais = count_letters(text_block)
-            simbolos_mat = len(re.findall(r'[0-9=\+\-\/\(\)\[\]\{\}\^\_]', text_block))
+            
+            # 💡 SOLUÇÃO 3: O BUG DO UNDERLINE
+            # Removido o \_ do final da regex. Agora a linha de assinatura será lida como texto normal.
+            simbolos_mat = len(re.findall(r'[0-9=\+\-\/\(\)\[\]\{\}\^]', text_block))
 
             is_math = (simbolos_mat > 3) and (letras_normais < 30) and (len(text_block) < 150)
             is_diagram_like = (not is_math) and altura > 100 and len(text_block) < 200
@@ -352,70 +394,80 @@ def extract_dla_pipeline(pdf_bytes, profile, prog_bar, max_pages=5, zoom_diagram
             if is_math:
                 cleaned = clean_text_artifacts(text_block)
                 if needs_visual_desc and looks_garbled(cleaned):
-                    img_bytes = rasterizar_regiao_pdf(page, bbox, zoom=zoom_math)
+                    img_bytes = rasterizar_regiao_pdf(page, bbox_txt, zoom=zoom_math)
+                    
+                    time.sleep(4.1)
                     latex_code = generate_latex_ocr(img_bytes)
 
                     if latex_code and validate_latex(latex_code):
-                        processed_content.append(f"\n\n[FÓRMULA LATEX (OCR)]: $ {latex_code} $\n\n")
+                        processed_content.append({"page_num": page_num, "bbox": bbox_txt, "type": "formula", "content": f"[FÓRMULA LATEX (OCR)]: $ {latex_code} $"})
                     else:
-                        processed_content.append(f"\n\n[FÓRMULA - texto original ilegível, revisar manualmente]: {cleaned}\n\n")
+                        processed_content.append({"page_num": page_num, "bbox": bbox_txt, "type": "aviso", "content": f"[FÓRMULA - texto original ilegível, revisar manualmente]: {cleaned}"})
                 else:
-                    processed_content.append(f"\n\n[FÓRMULA]: {cleaned}\n\n")
+                    processed_content.append({"page_num": page_num, "bbox": bbox_txt, "type": "formula", "content": f"[FÓRMULA]: {cleaned}"})
 
             elif is_diagram_like:
                 if needs_visual_desc:
-                    img_bytes = rasterizar_regiao_pdf(page, bbox, zoom=zoom_diagram)
+                    img_bytes = rasterizar_regiao_pdf(page, bbox_txt, zoom=zoom_diagram)
+                    
+                    time.sleep(4.1)
                     desc = generate_audiodescription(img_bytes)
-                    processed_content.append(f"\n\n[DIAGRAMA IDENTIFICADO]: {desc}\n\n")
+                    processed_content.append({"page_num": page_num, "bbox": bbox_txt, "type": "audiodescricao", "content": f"[DIAGRAMA IDENTIFICADO]: {desc}"})
                 else:
                     cleaned = clean_text_artifacts(text_block)
                     if cleaned:
-                        processed_content.append(cleaned)
+                        processed_content.append({"page_num": page_num, "bbox": bbox_txt, "type": "texto_normal", "content": cleaned})
             else:
                 cleaned = clean_text_artifacts(text_block)
                 if cleaned:
-                    processed_content.append(cleaned)
+                    processed_content.append({"page_num": page_num, "bbox": bbox_txt, "type": "texto_normal", "content": cleaned})
 
         prog_bar.progress((page_num + 1) / total_pages)
 
-    return "\n".join(processed_content), page_warnings
-
+    return processed_content, page_warnings
 # ==========================================
 # 3. PDF E UI
 # ==========================================
-def create_pdf(text, profile, f_size, line_mult, para_space):
-    buff = io.BytesIO()
-    doc = SimpleDocTemplate(buff, pagesize=A4, leftMargin=25 * mm, rightMargin=25 * mm,
-                             topMargin=25 * mm, bottomMargin=25 * mm)
-    styles = getSampleStyleSheet()
-
-    style_body = ParagraphStyle(
-        'Body',
-        parent=styles['Normal'],
-        fontName=GLOBAL_FONT,
-        fontSize=f_size,
-        leading=f_size * line_mult,
-        spaceAfter=para_space
-    )
-
-    elems = [Paragraph(f"Material Adaptado - {profile.value}", styles['Heading1']), Spacer(1, 20)]
-
-    for p in text.split('\n\n'):
-        if not p.strip():
+def inject_annotations_into_pdf(pdf_bytes, elements_data):
+    """
+    Abre o PDF original e injeta as descrições da IA como anotações.
+    Também oculta textos sujos (Liquid Paper).
+    """
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    
+    for elem in elements_data:
+        # Pula texto normal
+        if elem["type"] == "texto_normal":
             continue
-        p_safe = p.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('\n', '<br/>')
-
-        if "[AVISO" in p:
-            style_warn = ParagraphStyle('Warn', parent=style_body, textColor='red', leftIndent=20)
-            elems.append(Paragraph(f"<b>{p_safe}</b>", style_warn))
-        elif "[DIAGRAMA" in p or "[AUDIODESCRIÇÃO" in p or "[FÓRMULA" in p:
-            style_ad = ParagraphStyle('AD', parent=style_body, textColor='blue', leftIndent=20)
-            elems.append(Paragraph(f"<b>{p_safe}</b>", style_ad))
-        else:
-            elems.append(Paragraph(p_safe, style_body))
-
-    doc.build(elems)
-    buff.seek(0)
+            
+        page = doc.load_page(elem["page_num"])
+        rect = fitz.Rect(elem["bbox"])
+        
+        # --- A MÁGICA DO LIQUID PAPER ---
+        if elem["type"] == "lixo_visual":
+            # Desenha um retângulo branco sem bordas por cima do texto quebrado
+            page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
+            continue
+        
+        # Cria a anotação para os itens normais (Áudio descrição, fórmulas, avisos)
+        annot = page.add_text_annot(rect.top_left, elem["content"])
+        
+        if elem["type"] == "audiodescricao":
+            annot.set_info(title="Áudio Descrição (IA)")
+            annot.set_colors(stroke=(0.0, 0.5, 1.0)) # Azul
+        
+        elif elem["type"] == "formula":
+            annot.set_info(title="Fórmula Adaptada")
+            annot.set_colors(stroke=(1.0, 0.0, 0.0)) # Vermelho
+            
+        elif elem["type"] == "aviso":
+            annot.set_info(title="Aviso de Acessibilidade")
+            annot.set_colors(stroke=(1.0, 0.5, 0.0)) # Laranja
+            
+        annot.update()
+        
+    buff = io.BytesIO()
+    doc.save(buff)
     return buff.getvalue()
 
 def main():
@@ -424,10 +476,11 @@ def main():
     profile = AccessibilityProfile(sel_profile)
 
     st.sidebar.markdown("---")
+    
+    # As opções de entrelinhas e padding não afetam mais o PDF (já que ele mantém o layout original), 
+    # mas mantive o slider de fonte caso você ainda use no app web (ou pode remover essas 3 linhas depois)
     st.sidebar.subheader("Ajustes de Leitura")
-    f_size = st.sidebar.slider("Tamanho Fonte", 10, 30, 14)
-    line_spacing = st.sidebar.slider("Entrelinhas", 1.0, 3.0, 1.5)
-    para_padding = st.sidebar.slider("Espaço Parágrafos", 0, 50, 15)
+    f_size = st.sidebar.slider("Tamanho Fonte (Pré-visualização)", 10, 30, 14) 
 
     with st.sidebar.expander("Configurações avançadas"):
         max_pages = st.slider("Máximo de páginas a processar", 1, 30, 5)
@@ -440,38 +493,49 @@ def main():
         if st.button("PROCESSAR MATERIAL"):
             if up:
                 prog_bar = st.progress(0)
-                raw_text, warnings = extract_dla_pipeline(
-                    up.read(), profile, prog_bar,
+                
+                # Salvamos os bytes originais para reutilizar depois sem erro de Stream
+                original_pdf_bytes = up.read() 
+                
+                raw_data, warnings = extract_dla_pipeline(
+                    original_pdf_bytes, profile, prog_bar,
                     max_pages=max_pages,
                     zoom_diagram=zoom_diagram, zoom_math=zoom_math,
                 )
-                st.session_state.adapted_text = raw_text
+                st.session_state.adapted_data = raw_data
                 st.session_state.warnings = warnings
+                st.session_state.original_pdf_bytes = original_pdf_bytes # Guarda para a hora de exportar
+                
                 prog_bar.empty()
                 st.rerun()
             else:
                 st.warning("Selecione um arquivo PDF antes de processar.")
 
     with col2:
-        if st.session_state.warnings:
+        if "warnings" in st.session_state and st.session_state.warnings:
             for w in st.session_state.warnings:
                 st.warning(w)
 
-        if st.session_state.adapted_text:
-            st.text_area("Resultado:", st.session_state.adapted_text, height=500)
+        if "adapted_data" in st.session_state and st.session_state.adapted_data:
+            
+            # Reconstrói os textos para jogar na tela e pro TTS ler na ordem certa
+            texto_para_tela = "\n\n".join([item["content"] for item in st.session_state.adapted_data])
+            
+            st.text_area("Pré-visualização do Conteúdo:", texto_para_tela, height=500)
 
             # --- BOTÃO DE ÁUDIO NATIVO (TTS) ---
             if st.button("🔊 Ouvir Adaptação"):
                 with st.spinner("Sintetizando áudio..."):
-                    # Converte o texto da tela para voz (Português do Brasil)
-                    tts = gTTS(text=st.session_state.adapted_text, lang='pt', tld='com.br')
+                    tts = gTTS(text=texto_para_tela, lang='pt', tld='com.br')
                     audio_fp = io.BytesIO()
                     tts.write_to_fp(audio_fp)
                     audio_fp.seek(0)
                     st.audio(audio_fp, format='audio/mp3')
 
-            pdf_bytes = create_pdf(st.session_state.adapted_text, profile, f_size, line_spacing, para_padding)
-            st.download_button("Exportar PDF", pdf_bytes, "adaptado.pdf", "application/pdf")
+            # --- EXPORTAÇÃO IN-PLACE ---
+            if "original_pdf_bytes" in st.session_state:
+                pdf_bytes_final = inject_annotations_into_pdf(st.session_state.original_pdf_bytes, st.session_state.adapted_data)
+                st.download_button("Exportar PDF Acessível", pdf_bytes_final, "adaptado.pdf", "application/pdf")
 
 if __name__ == "__main__":
     main()
