@@ -289,6 +289,18 @@ REGRA ESTRITA E ABSOLUTA: O seu output será injetado diretamente em um parser d
     except Exception:
         return None
 
+def generate_table_html(image_bytes):
+    try:
+        pil_img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        prompt = (
+            "Você é um extrator de dados focado em acessibilidade. Transcreva esta imagem de tabela estritamente para formato Markdown. "
+            "Mantenha as linhas e colunas exatas. É TERMINANTEMENTE PROIBIDO adicionar introduções, explicações ou notas. Retorne apenas a tabela."
+        )
+        model = genai.GenerativeModel('gemini-3.1-flash-lite')
+        return model.generate_content([prompt, pil_img]).text.strip()
+    except Exception:
+        return "[AVISO: Falha ao transcrever tabela]"
+
 def extract_dla_pipeline(pdf_bytes, profile, prog_bar, max_pages=5, zoom_diagram=2.0, zoom_math=3.0):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     processed_content = []
@@ -302,6 +314,13 @@ def extract_dla_pipeline(pdf_bytes, profile, prog_bar, max_pages=5, zoom_diagram
     needs_visual_desc = profile in (AccessibilityProfile.LOW_VISION, AccessibilityProfile.BLINDNESS)
 
     for page_num in range(total_pages):
+        # Dentro do extract_dla_pipeline, no início do loop for page_num in range(total_pages):
+        page = doc.load_page(page_num)
+
+        # 1. Encontra as tabelas reais da página
+        tabelas_encontradas = page.find_tables()
+        bbox_tabelas = [tab.bbox for tab in tabelas_encontradas.tables] if tabelas_encontradas.tables else []
+
         page = doc.load_page(page_num)
         blocks = page.get_text("dict")["blocks"]
 
@@ -389,6 +408,15 @@ def extract_dla_pipeline(pdf_bytes, profile, prog_bar, max_pages=5, zoom_diagram
             simbolos_mat = len(re.findall(r'[0-9=\+\-\/\(\)\[\]\{\}\^]', text_block))
 
             is_math = (simbolos_mat > 3) and (letras_normais < 30) and (len(text_block) < 150)
+            is_math = (simbolos_mat > 3) and (letras_normais < 30) and (len(text_block) < 150)
+            
+            # 🛡️ NOVO: Se o texto colidir com uma tabela, force is_math para False
+            for tb in bbox_tabelas:
+                if _rects_overlap(bbox_txt, tb):
+                    is_math = False
+                    break
+            
+            is_diagram_like = (not is_math) and altura > 100 and len(text_block) < 200
             is_diagram_like = (not is_math) and altura > 100 and len(text_block) < 200
 
             if is_math:
