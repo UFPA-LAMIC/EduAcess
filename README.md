@@ -126,4 +126,6 @@ Responsáveis pelo projeto:
 
 👨‍🎓 Bolsista: Gustavo Tavares Assunção (gustavo.tavares@itec.ufpa.br)
 
+👨‍🎓 Ex-Bolsista: Gabriel Silva (silva.gabriel@itec.ufpa.br)
+
 👨‍🎓 Voluntário: Felipe Lima Calvalcante (cavalcante.felipe@itec.ufpa.br)
