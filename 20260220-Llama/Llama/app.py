@@ -652,26 +652,6 @@ def inject_annotations_into_pdf(pdf_bytes, elements_data):
 
 def main():
     st.sidebar.title("EduAccess Pro - Unificado")
-
-    # 1. Diagnóstico da chave lida dos Secrets na nuvem
-    try:
-        chave_secret = str(st.secrets.get("GEMINI_API_KEY", "")).strip().strip('"').strip("'")
-    except Exception:
-        chave_secret = ""
-
-    formato_ok = chave_secret.startswith("AIza") and len(chave_secret) == 39
-    preview_chave = f"{chave_secret[:6]}...{chave_secret[-4:]}" if len(chave_secret) >= 10 else "vazia/curta"
-    st.sidebar.caption(
-        f"Secret na nuvem: `{preview_chave}` | "
-        f"{len(chave_secret)} chars | Formato: {'✅' if formato_ok else '❌'}"
-    )
-
-    # 2. Campo de teste rápido para sobrescrever a chave pela interface
-    chave_manual = st.sidebar.text_input("Usar API Key manual (teste)", type="password")
-    if chave_manual:
-        genai.configure(api_key=chave_manual.strip(), transport="rest")
-        st.sidebar.success("Usando a chave digitada acima!")
-
     sel_profile = st.sidebar.selectbox("Necessidade", [p.value for p in AccessibilityProfile])
     profile = AccessibilityProfile(sel_profile)
 
