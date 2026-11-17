@@ -28,11 +28,14 @@ except ImportError:
 
 # Configuração da Chave de API via Streamlit Secrets
 try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    raw_key = st.secrets["GEMINI_API_KEY"]
+    # Remove espaços, quebras de linha e aspas duplicadas acidentais
+    clean_key = raw_key.strip().strip('"').strip("'")
+    genai.configure(api_key=clean_key, transport="rest")
 except Exception:
-    st.error("ERRO: Chave da API não encontrada. Crie o arquivo .streamlit/secrets.toml com a sua GEMINI_API_KEY.")
+    st.error("ERRO: Chave da API não encontrada. Configure GEMINI_API_KEY nos Secrets.")
     st.stop()
-
+    
 # --- DEPENDÊNCIAS DE PDF ---
 try:
     import fitz  # PyMuPDF
