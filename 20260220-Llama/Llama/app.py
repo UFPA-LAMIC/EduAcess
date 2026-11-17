@@ -652,6 +652,26 @@ def inject_annotations_into_pdf(pdf_bytes, elements_data):
 
 def main():
     st.sidebar.title("EduAccess Pro - Unificado")
+
+    # 1. Diagnóstico da chave lida dos Secrets na nuvem
+    try:
+        chave_secret = str(st.secrets.get("GEMINI_API_KEY", "")).strip().strip('"').strip("'")
+    except Exception:
+        chave_secret = ""
+
+    formato_ok = chave_secret.startswith("AIza") and len(chave_secret) == 39
+    preview_chave = f"{chave_secret[:6]}...{chave_secret[-4:]}" if len(chave_secret) >= 10 else "vazia/curta"
+    st.sidebar.caption(
+        f"Secret na nuvem: `{preview_chave}` | "
+        f"{len(chave_secret)} chars | Formato: {'✅' if formato_ok else '❌'}"
+    )
+
+    # 2. Campo de teste rápido para sobrescrever a chave pela interface
+    chave_manual = st.sidebar.text_input("Usar API Key manual (teste)", type="password")
+    if chave_manual:
+        genai.configure(api_key=chave_manual.strip(), transport="rest")
+        st.sidebar.success("Usando a chave digitada acima!")
+
     sel_profile = st.sidebar.selectbox("Necessidade", [p.value for p in AccessibilityProfile])
     profile = AccessibilityProfile(sel_profile)
 
@@ -692,40 +712,17 @@ def main():
                 st.warning(w)
 
         if "adapted_data" in st.session_state and st.session_state.adapted_data:
-            # 1. Monta o texto original para exibir na caixa
-            texto_para_tela = "\n\n".join([item["content"] for item in st.session_state.adapted_data if item.get("content")])
-            
-            # 2. Captura o texto editado pelo usuário
-            texto_editado = st.text_area("Pré-visualização do Conteúdo:", value=texto_para_tela, height=500)
+            texto_para_tela = "\n\n".join([item["content"] for item in st.session_state.adapted_data])
+            st.text_area("Pré-visualização do Conteúdo:", texto_para_tela, height=500)
 
-            # 3. Atualiza st.session_state.adapted_data caso o usuário tenha editado o texto
-            if texto_editado != texto_para_tela:
-                blocos = [b.strip() for b in texto_editado.split("\n\n") if b.strip()]
-                novos_elementos = []
-                for i, bloco in enumerate(blocos):
-                    if i < len(st.session_state.adapted_data):
-                        elem = st.session_state.adapted_data[i].copy()
-                        elem["content"] = bloco
-                        novos_elementos.append(elem)
-                    else:
-                        novos_elementos.append({
-                            "page_num": 0,
-                            "bbox": (0, 0, 0, 0),
-                            "type": "texto_normal",
-                            "content": bloco
-                        })
-                st.session_state.adapted_data = novos_elementos
-
-            # 4. Gera áudio com o texto atualizado
             if st.button("🔊 Ouvir Adaptação"):
                 with st.spinner("Sintetizando áudio..."):
-                    tts = gTTS(text=texto_editado, lang='pt', tld='com.br')
+                    tts = gTTS(text=texto_para_tela, lang='pt', tld='com.br')
                     audio_fp = io.BytesIO()
                     tts.write_to_fp(audio_fp)
                     audio_fp.seek(0)
                     st.audio(audio_fp, format='audio/mp3')
 
-            # 5. Exporta o PDF usando st.session_state.adapted_data sincronizado
             if "original_pdf_bytes" in st.session_state:
                 if profile in [AccessibilityProfile.ADHD, AccessibilityProfile.DYSLEXIA, AccessibilityProfile.AUTISM]:
                     pdf_bytes_final = build_accessible_pdf(st.session_state.adapted_data, profile)
